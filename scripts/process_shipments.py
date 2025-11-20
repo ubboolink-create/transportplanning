@@ -39,12 +39,15 @@ def get_latest_excel_file(directory: str) -> str:
     return latest_file
 
 # -----------------------------------------------------------
-# Functie: dataframe verwerken (Kolomnamen gefixt)
+# Functie: dataframe verwerken (met kolom opschoning)
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Start met verwerken en hernoemen van kolommen...")
+    
+    # CRUCIALE FIX: Verwijder leidende/volgende spaties uit alle kolomnamen
+    df.columns = df.columns.str.strip() 
 
-    # Hernoem alleen de kolommen die we ZEKER nodig hebben en die in je Excel staan.
+    # Hernoem de kolommen die we nodig hebben.
     df = df.rename(columns={
         "Material": "sku",          # Artikelnummer
         "Verzenden aan": "shipto",  # Adres code
