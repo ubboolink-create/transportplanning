@@ -11,6 +11,12 @@ def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
         "Verzenden aan": "shipto",  # Adres code
         "Laadmeter": "lm",          # Laadmeter
         "Vervoerder": "carrier",    # Vervoerder
+    })
+    
+    # 1. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
+    df = df.dropna(subset=["sku"]) 
+    
+    # ... (de rest van de functie blijft hetzelfde)
         
         # De volgende kolommen zijn belangrijk voor de output,
         # maar zijn mogelijk niet de juiste namen in jouw bestand. 
