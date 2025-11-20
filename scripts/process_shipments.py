@@ -1,97 +1,41 @@
-import pandas as pd
-import os
-import logging
-from datetime import datetime
-
-# -----------------------------------------------------------
-# Logging configureren
-# -----------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-
-DATA_DIR = "data"
-OUTPUT_DIR = "output"
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "output.csv")
-
-# -----------------------------------------------------------
-# Functie: meest recente Excelbestand vinden
-# -----------------------------------------------------------
-def get_latest_excel_file(directory: str) -> str:
-    files = [
-        f for f in os.listdir(directory)
-        if f.lower().endswith((".xlsx", ".xls"))
-    ]
-
-    if not files:
-        # FIX: Deze regel was de bron van de IndentationError
-        raise FileNotFoundError("Geen Excelbestanden gevonden in /data")
-
-    # sorteer op aanmaaktijd
-    files = sorted(
-        files,
-        key=lambda x: os.path.getmtime(os.path.join(directory, x)),
-        reverse=True
-    )
-
-    latest_file = os.path.join(directory, files[0])
-    logging.info(f"Nieuwste bestand gevonden: {latest_file}")
-    return latest_file
-
 # -----------------------------------------------------------
 # Functie: dataframe verwerken
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
-    logging.info("Start met verwerken…")
+    logging.info("Start met verwerken en hernoemen van kolommen...")
 
-    # Voorbeeldcriteria opnieuw geïmplementeerd zoals jij vroeg
-    # PAS AAN indien je nieuwe criteria hebt
-
-    # Rijen verwijderen waar SKU ontbreekt
-    df = df.dropna(subset=["SKU"])
-
-    # Bewerkingen kunnen hier worden uitgebreid
-    # Bijvoorbeeld:
-    # df = df[df["Quantity"] > 0]
-
-    # Kolommen hernoemen (voorbeeld)
+    # Hernoem eerst alle relevante kolommen naar de interne, simpele namen.
+    # Dit is cruciaal, anders werkt de rest van de logica niet.
     df = df.rename(columns={
-        "SKU": "sku",
-        "Description": "description",
-        "Quantity": "quantity",
+        "Material": "sku",          # Artikelnummer (jouw criterium)
+        "Verzenden aan": "shipto",  # Adres code
+        "Laadmeter": "lm",          # Laadmeter
+        "Vervoerder": "carrier",    # Vervoerder
+        
+        # De volgende kolommen zijn belangrijk voor de output,
+        # maar zijn mogelijk niet de juiste namen in jouw bestand. 
+        # Voeg ze toe als ze er zijn, of verwijder ze als ze niet bestaan.
+        "Order": "orderno",
+        "Order Position": "regel",
+        "Volgnummer": "volgnummer",
+        "Set": "set"
     })
+    
+    # 1. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
+    # Dit lost de oorspronkelijke KeyError op, omdat we nu op "sku" zoeken.
+    df = df.dropna(subset=["sku"]) 
 
-    # Spaties en rare karakters verwijderen in tekstkolommen
+    # 2. Opschonen van de tekstkolommen
     df["sku"] = df["sku"].astype(str).str.strip()
-    df["description"] = df["description"].astype(str).str.strip()
+    df["shipto"] = df["shipto"].astype(str).str.strip() 
+
+    # 3. Zorg dat LM numeriek is (deze stap hoort erbij, ook al stond hij niet in jouw opgeschoonde code)
+    df["lm"] = pd.to_numeric(df["lm"], errors='coerce').fillna(0.0)
 
     logging.info("Verwerking voltooid.")
     return df
 
-# -----------------------------------------------------------
-# Main processing routine
-# -----------------------------------------------------------
-def main():
-    # Output directory aanmaken indien nodig
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    # Meest recente Excelbestand ophalen
-    excel_path = get_latest_excel_file(DATA_DIR)
-
-    # Excelbestand inlezen
-    logging.info("Excelbestand wordt geladen…")
-    df = pd.read_excel(excel_path)
-
-    # Verwerken
-    df_processed = process_shipments(df)
-
-    # Output opslaan
-    df_processed.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
-    logging.info(f"CSV opgeslagen als: {OUTPUT_FILE}")
-
-# -----------------------------------------------------------
-# Script starten
-# -----------------------------------------------------------
-if __name__ == "__main__":
-    main()
+# Let op:
+# De rest van jouw OORSPRONKELIJKE, LANGE script (dat je aan ChatGPT gaf)
+# moet in dit bestand worden toegevoegd na deze functie, 
+# anders doet de code niets met de LM-criteria en de vervoerdertoewijzing.
