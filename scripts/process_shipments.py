@@ -39,20 +39,26 @@ def get_latest_excel_file(directory: str) -> str:
     return latest_file
 
 # -----------------------------------------------------------
-# Functie: dataframe verwerken (met kolom opschoning)
+# Functie: dataframe verwerken (met verbeterde kolom opschoning)
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Start met verwerken en hernoemen van kolommen...")
     
-    # CRUCIALE FIX: Verwijder leidende/volgende spaties uit alle kolomnamen
+    # --- DEBUGGING STAP: Log de originele headers ---
+    logging.info(f"Kolommen na laden: {df.columns.tolist()}") 
+    
+    # CRUCIALE FIX 1: Verwijder leidende/volgende spaties uit alle kolomnamen
     df.columns = df.columns.str.strip() 
 
-    # Hernoem de kolommen die we nodig hebben.
+    # CRUCIALE FIX 2: Maak alle kolomnamen lowercase om case-gevoeligheid te elimineren
+    df.columns = df.columns.str.lower()
+    
+    # Hernoem de kolommen die we nodig hebben (de keys zijn nu lowercase).
     df = df.rename(columns={
-        "Material": "sku",          # Artikelnummer
-        "Verzenden aan": "shipto",  # Adres code
-        "Laadmeter": "lm",          # Laadmeter
-        "Vervoerder": "carrier",    # Vervoerder
+        "material": "sku",          # Artikelnummer
+        "verzenden aan": "shipto",  # Adres code
+        "laadmeter": "lm",          # Laadmeter
+        "vervoerder": "carrier",    # Vervoerder
     }, errors='ignore') 
     
     # 1. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
