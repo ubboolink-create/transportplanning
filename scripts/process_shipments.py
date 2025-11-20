@@ -39,29 +39,30 @@ def get_latest_excel_file(directory: str) -> str:
     return latest_file
 
 # -----------------------------------------------------------
-# Functie: dataframe verwerken (met verbeterde kolom opschoning)
+# Functie: dataframe verwerken (met definitieve kolomnamen)
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Start met verwerken en hernoemen van kolommen...")
     
-    # --- DEBUGGING STAP: Log de originele headers ---
-    logging.info(f"Kolommen na laden: {df.columns.tolist()}") 
+    # --- DEBUGGING STAP: Log de originele headers (deze kan nu weg) ---
+    # logging.info(f"Kolommen na laden: {df.columns.tolist()}") 
     
-    # CRUCIALE FIX 1: Verwijder leidende/volgende spaties uit alle kolomnamen
+    # 1. Verwijder leidende/volgende spaties uit alle kolomnamen
     df.columns = df.columns.str.strip() 
 
-    # CRUCIALE FIX 2: Maak alle kolomnamen lowercase om case-gevoeligheid te elimineren
+    # 2. Maak alle kolomnamen lowercase om case-gevoeligheid te elimineren
     df.columns = df.columns.str.lower()
     
-    # Hernoem de kolommen die we nodig hebben (de keys zijn nu lowercase).
+    # Hernoem de kolommen met de GEVERIFIEERDE, lowercase namen uit de log.
     df = df.rename(columns={
-        "material": "sku",          # Artikelnummer
-        "verzenden aan": "shipto",  # Adres code
-        "laadmeter": "lm",          # Laadmeter
-        "vervoerder": "carrier",    # Vervoerder
+        "artikel": "sku",             # Artikelnummer (was: Material)
+        "verzenden-aan code": "shipto",  # Adres code
+        "load meter": "lm",           # Laadmeter (was: Laadmeter)
+        "vervoerder/ldv": "carrier",  # Vervoerder (was: Vervoerder)
     }, errors='ignore') 
     
     # 1. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
+    # Dit moet NU werken, omdat de kolomnaam correct is.
     df = df.dropna(subset=["sku"]) 
     
     # 2. Opschonen van de tekstkolommen
