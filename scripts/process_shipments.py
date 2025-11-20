@@ -41,42 +41,68 @@ def get_latest_excel_file(directory: str) -> str:
     return latest_file
 
 # -----------------------------------------------------------
-# Functie: dataframe verwerken (LAATSTE FIX)
+# Functie: dataframe verwerken (LAATSTE FIX HEADER=0)
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
-    logging.info("Start met verwerken (DEFINITIEVE INDEXEN)..")
+    logging.info("Start met verwerken (DEFINITIEF: HEADER IS RIJ 1)...")
     logging.info(f"Aantal rijen vóór verwerking: {len(df)}")
     
-    # --- DE JUISTE NUMERIEKE INDEXEN ---
-    # Carrier (CC) = 80
-    # Shipto (AH) = 33
-    # SKU (BK) = 61
-    # LM (BS) = 70
-    try:
-        df = df.rename(columns={
-            33: "shipto",    # AH
-            80: "carrier",   # CC
-            61: "sku",       # BK
-            70: "lm"         # BS
-        }, errors='raise') 
-    except KeyError:
-        logging.error("Kon niet hernoemen: Controleer of de indices (33, 61, 70, 80) kloppen voor uw Excel.")
-        return pd.DataFrame() 
+    # 1. Headers opschonen
+    # Dit is belangrijk, want Pandas noemt een lege header 'Unnamed: X'
+    df.columns = df.columns.astype(str).str.strip().str.lower()
     
-    logging.info("Kolomnamen succesvol ingesteld met numerieke indexen.")
+    # 2. Hernoem de kolommen met hun (eventuele) onbekende namen naar de werknaam.
+    # We gebruiken de bekende namen en de door Pandas gegeven namen ('unnamed')
+    # Carrier (CC) = 'unnamed: 80' of 'vervoerder/ldv'
+    # Shipto (AH) = 'unnamed: 33' of 'verzenden-aan code'
+    # SKU (BK) = 'unnamed: 61'
+    # LM (BS) = 'load meter'
     
-    # 2. Nan-waarden opvullen om crashes in de groepering te voorkomen (FILTER IS NOG STEEDS UIT)
+    # Definitieve Indexen: 33 (AH), 61 (BK), 70 (BS), 80 (CC)
+    df = df.rename(columns={
+        'unnamed: 33': "shipto",    # AH
+        'unnamed: 61': "sku",       # BK
+        'unnamed: 80': "carrier",   # CC
+        # Gebruik de originele namen als die wel bestaan
+        'verzenden-aan code': 'shipto',
+        'vervoerder/ldv': 'carrier',
+        'load meter': 'lm',
+    }, errors='ignore') 
+    
+    # Als de Load meter kolom de onbekende naam 'unnamed: 70' heeft:
+    if 'unnamed: 70' in df.columns and 'lm' not in df.columns:
+        df = df.rename(columns={'unnamed: 70': "lm"}, errors='ignore')
+        
+    logging.info("Kolomnamen succesvol ingesteld.")
+
+    # 3. Opschoning
+    if 'lm' not in df.columns:
+         logging.warning("LM kolom ('load meter' of 'unnamed: 70') niet gevonden.")
+         df['lm'] = 0.0
+
     df['lm'] = pd.to_numeric(df['lm'], errors='coerce').fillna(0.0)
 
-    # SKU: Maak een leesbare placeholder
+    # SKU, Carrier, Shipto: Opschonen en filteren
+    for col in ['sku', 'carrier', 'shipto']:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+        else:
+            logging.warning(f"Kolom '{col}' ontbreekt na hernoeming. Kan niet opschonen/filteren.")
+            df[col] = '' # Maak de kolom aan om crashes te voorkomen
+
+    # ---!!! DE FILTER WORDT NU AANGEZET OP DE ZENDINGEN ZELF !!!---
+    # Dit verwijdert alle rijen waar het SKU leeg is (wat de lege BK1 cel en lege rijen verwijdert)
     if 'sku' in df.columns:
-        df['sku'] = df['sku'].astype(str).str.strip().fillna('ONBEKEND_SKU')
-    if 'carrier' in df.columns:
-        df['carrier'] = df['carrier'].astype(str).str.strip().fillna('ONBEKEND_VERVOERDER')
-    if 'shipto' in df.columns:
-        df['shipto'] = df['shipto'].astype(str).str.strip().fillna('ONBEKEND_ADRES')
+        # Verwijder rijen waar SKU leeg of 'nan' is
+        df = df.dropna(subset=['sku'])
+        df = df[df['sku'] != '']
         
-    logging.info(f"Aantal rijen na verwerking: {len(df)}") 
+    # 4. Nan-waarden opvullen voor groepering (voorkomt fouten als er nog NaNs zijn in Carrier/Shipto)
+    df['sku'] = df['sku'].fillna('ONBEKEND_SKU')
+    df['carrier'] = df['carrier'].fillna('ONBEKEND_VERVOERDER')
+    df['shipto'] = df['shipto'].fillna('ONBEKEND_ADRES')
+        
+    logging.info(f"Aantal rijen na filtering: {len(df)}") 
     return df
 
 # -----------------------------------------------------------
@@ -84,6 +110,7 @@ def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------
 def perform_transport_planning(df_processed: pd.DataFrame) -> pd.DataFrame:
     logging.info("Start met transportplanning: Groeperen en rangschikken...")
+    
     # Groeperen op de drie criteria
     df_grouped = df_processed.groupby(['carrier', 'shipto', 'sku']).agg(
         num_items=('sku', 'size'),  
@@ -122,7 +149,7 @@ def perform_transport_planning(df_processed: pd.DataFrame) -> pd.DataFrame:
     return df_grouped
 
 # -----------------------------------------------------------
-# Main processing routine (ULTIEME FIX)
+# Main processing routine
 # -----------------------------------------------------------
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -134,8 +161,8 @@ def main():
         return
 
     logging.info("Excelbestand wordt geladen…")
-    # !!! DE BELANGRIJKE FIX: HEADER=None - Negeer alle headers en gebruik indexen
-    df = pd.read_excel(excel_path, header=None) 
+    # !!! Header is Rij 1 (Index 0) !!!
+    df = pd.read_excel(excel_path, header=0) 
 
     df_processed = process_shipments(df)
 
@@ -145,7 +172,7 @@ def main():
         df_final.to_csv(FINAL_OUTPUT_FILE, index=False, encoding="utf-8")
         logging.info(f"Final CSV opgeslagen als: {FINAL_OUTPUT_FILE}")
     else:
-        logging.error("FATALE FOUT: Het Excel-bestand leest als een leeg DataFrame.")
+        logging.error("FATALE FOUT: Geen data overgebleven na filtering. Controleer of de SKU-kolom (BK/unnamed: 61) gevuld is.")
 
 
 # -----------------------------------------------------------
