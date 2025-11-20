@@ -14,6 +14,10 @@ logging.basicConfig(
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "output.csv")
+FINAL_OUTPUT_FILE = os.path.join(OUTPUT_DIR, "transportplanning_ready.csv")
+
+# De maximale belading per vrachtwagen (bijvoorbeeld 13.6 Laadmeters)
+MAX_LM = 13.6 
 
 # -----------------------------------------------------------
 # Functie: meest recente Excelbestand vinden
@@ -50,37 +54,88 @@ def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     # 2. Maak alle kolomnamen lowercase om case-gevoeligheid te elimineren
     df.columns = df.columns.str.lower()
     
-    # Hernoem de bekende, niet-lege kolommen
+    # Hernoem de bekende kolommen. We gebruiken de kolomnamen uit de laatste succesvolle log.
     df = df.rename(columns={
-        "verzenden-aan code": "shipto",  # Adres code
-        "load meter": "lm",           # Laadmeter
-        "vervoerder/ldv": "carrier",  # Vervoerder
+        "verzenden-aan code": "shipto",  # Adres code (A10)
+        "load meter": "lm",           # Laadmeter (A16)
+        "vervoerder/ldv": "carrier",  # Vervoerder (A08)
     }, errors='ignore') 
     
-    # 3. FIX VOOR LEGE SKU-CEL (BK1): Zoek de artikelkolom
-    # We proberen eerst de naam 'artikel' die in de log stond
+    # 3. FIX VOOR LEGE SKU-CEL: Zoek de artikelkolom
+    # We proberen de naam 'artikel' en de meest waarschijnlijke 'Unnamed' kolom.
     if "artikel" in df.columns:
         df = df.rename(columns={"artikel": "sku"}, errors='ignore')
-    # Zo niet, dan proberen we de meest waarschijnlijke 'Unnamed' kolom in de buurt
-    elif "unnamed: 61" in df.columns: # Of probeer 62, 63 als 61 niet werkt
+    elif "unnamed: 61" in df.columns: # Gevonden in eerdere logs
         df = df.rename(columns={"unnamed: 61": "sku"}, errors='ignore')
     else:
-        # Debugging stap: Dit zal opnieuw de logs sturen als het niet werkt.
-        logging.error("Kan kolom voor Artikelnummer (SKU) niet vinden. Controleer kolomnamen.")
+        logging.warning("Kon kolom voor Artikelnummer (SKU) niet vinden. Filtering op SKU is mogelijk onbetrouwbaar.")
+        # Voeg een lege kolom 'sku' toe om crashes op te vangen.
+        df['sku'] = None
 
 
-    # 4. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
+    # 4. Data Opschonen
     df = df.dropna(subset=["sku"]) 
-    
-    # 5. Opschonen van de tekstkolommen
     df["sku"] = df["sku"].astype(str).str.strip()
     df["shipto"] = df["shipto"].astype(str).str.strip() 
-
-    # 6. Zorg dat LM numeriek is
+    df["carrier"] = df["carrier"].astype(str).str.strip() 
     df["lm"] = pd.to_numeric(df["lm"], errors='coerce').fillna(0.0)
-
+    
     logging.info("Verwerking voltooid.")
     return df
+
+# -----------------------------------------------------------
+# Functie: Transportplanning en Groepering
+# -----------------------------------------------------------
+def perform_transport_planning(df_processed: pd.DataFrame) -> pd.DataFrame:
+    logging.info("Start met transportplanning: Groeperen en rangschikken...")
+
+    # 1. Groeperen op de drie criteria: Vervoerder (A08), Adres (A10) en SKU
+    df_grouped = df_processed.groupby(['carrier', 'shipto', 'sku']).agg(
+        # Tel het aantal regels voor deze zending
+        num_items=('sku', 'size'),  
+        # Bereken de totale laadmeter voor deze groep
+        total_lm=('lm', 'sum') 
+    ).reset_index()
+
+    # 2. De output voorbereiden
+    df_grouped['truck_id'] = None
+    df_grouped['lm_used_in_truck'] = 0.0
+
+    # 3. Rangschik de zendingen
+    # Sorteer op Vervoerder, dan op Adres, dan op Laadmeter (grootste eerst)
+    df_grouped = df_grouped.sort_values(
+        ['carrier', 'shipto', 'total_lm'],
+        ascending=[True, True, False]
+    )
+    
+    # 4. Laadplan maken (zeer vereenvoudigde versie van bin packing)
+    current_truck_id = 1
+    current_carrier = None
+    current_lm = 0.0
+
+    for index, row in df_grouped.iterrows():
+        # Reset de vrachtwagen als de vervoerder wijzigt
+        if current_carrier != row['carrier']:
+            current_lm = 0.0
+            current_truck_id += 1 
+            current_carrier = row['carrier']
+            logging.info(f"Nieuwe vervoerder ({current_carrier}). Start Truck ID {current_truck_id}")
+
+        # Kan de zending in de huidige vrachtwagen?
+        if current_lm + row['total_lm'] <= MAX_LM:
+            # Ja, voeg toe
+            current_lm += row['total_lm']
+            df_grouped.loc[index, 'truck_id'] = f"{row['carrier']}-{current_truck_id}"
+            df_grouped.loc[index, 'lm_used_in_truck'] = current_lm
+        else:
+            # Nee, start een nieuwe vrachtwagen
+            current_truck_id += 1
+            current_lm = row['total_lm']
+            df_grouped.loc[index, 'truck_id'] = f"{row['carrier']}-{current_truck_id}"
+            df_grouped.loc[index, 'lm_used_in_truck'] = current_lm
+            
+    logging.info(f"Planning voltooid. Totaal aantal vrachtwagens: {current_truck_id}")
+    return df_grouped
 
 # -----------------------------------------------------------
 # Main processing routine
@@ -90,19 +145,25 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Meest recente Excelbestand ophalen
-    excel_path = get_latest_excel_file(DATA_DIR)
+    try:
+        excel_path = get_latest_excel_file(DATA_DIR)
+    except FileNotFoundError as e:
+        logging.error(e)
+        return
 
     # Excelbestand inlezen
     logging.info("Excelbestand wordt geladen…")
-    # We blijven bij de default header=0, aangezien je zei dat de tweede rij geen header heeft.
     df = pd.read_excel(excel_path) 
 
-    # Verwerken
+    # 1. Verwerken en opschonen van de kolommen
     df_processed = process_shipments(df)
 
-    # Output opslaan
-    df_processed.to_csv(OUTPUT_FILE, index=False, encoding="utf-8")
-    logging.info(f"CSV opgeslagen als: {OUTPUT_FILE}")
+    # 2. Transportplanning uitvoeren
+    df_final = perform_transport_planning(df_processed)
+
+    # 3. Output opslaan
+    df_final.to_csv(FINAL_OUTPUT_FILE, index=False, encoding="utf-8")
+    logging.info(f"Final CSV opgeslagen als: {FINAL_OUTPUT_FILE}")
 
 # -----------------------------------------------------------
 # Script starten
