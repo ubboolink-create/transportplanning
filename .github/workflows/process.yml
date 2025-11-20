@@ -4,6 +4,9 @@ on:
     paths:
       - 'data/*.xlsx'
 
+permissions:
+  contents: write # TOEGEVOEGD: Geeft de GitHub Actions bot schrijfrechten om de output.csv terug te pushen
+
 jobs:
   run-processing:
     runs-on: ubuntu-latest
