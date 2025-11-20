@@ -39,13 +39,10 @@ def get_latest_excel_file(directory: str) -> str:
     return latest_file
 
 # -----------------------------------------------------------
-# Functie: dataframe verwerken (met definitieve kolomnamen)
+# Functie: dataframe verwerken (met definitieve kolomnamen en fallback)
 # -----------------------------------------------------------
 def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     logging.info("Start met verwerken en hernoemen van kolommen...")
-    
-    # --- DEBUGGING STAP: Log de originele headers (deze kan nu weg) ---
-    # logging.info(f"Kolommen na laden: {df.columns.tolist()}") 
     
     # 1. Verwijder leidende/volgende spaties uit alle kolomnamen
     df.columns = df.columns.str.strip() 
@@ -53,23 +50,33 @@ def process_shipments(df: pd.DataFrame) -> pd.DataFrame:
     # 2. Maak alle kolomnamen lowercase om case-gevoeligheid te elimineren
     df.columns = df.columns.str.lower()
     
-    # Hernoem de kolommen met de GEVERIFIEERDE, lowercase namen uit de log.
+    # Hernoem de bekende, niet-lege kolommen
     df = df.rename(columns={
-        "artikel": "sku",             # Artikelnummer (was: Material)
         "verzenden-aan code": "shipto",  # Adres code
-        "load meter": "lm",           # Laadmeter (was: Laadmeter)
-        "vervoerder/ldv": "carrier",  # Vervoerder (was: Vervoerder)
+        "load meter": "lm",           # Laadmeter
+        "vervoerder/ldv": "carrier",  # Vervoerder
     }, errors='ignore') 
     
-    # 1. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
-    # Dit moet NU werken, omdat de kolomnaam correct is.
+    # 3. FIX VOOR LEGE SKU-CEL (BK1): Zoek de artikelkolom
+    # We proberen eerst de naam 'artikel' die in de log stond
+    if "artikel" in df.columns:
+        df = df.rename(columns={"artikel": "sku"}, errors='ignore')
+    # Zo niet, dan proberen we de meest waarschijnlijke 'Unnamed' kolom in de buurt
+    elif "unnamed: 61" in df.columns: # Of probeer 62, 63 als 61 niet werkt
+        df = df.rename(columns={"unnamed: 61": "sku"}, errors='ignore')
+    else:
+        # Debugging stap: Dit zal opnieuw de logs sturen als het niet werkt.
+        logging.error("Kan kolom voor Artikelnummer (SKU) niet vinden. Controleer kolomnamen.")
+
+
+    # 4. Rijen verwijderen waar Artikelnummer (nu 'sku') ontbreekt.
     df = df.dropna(subset=["sku"]) 
     
-    # 2. Opschonen van de tekstkolommen
+    # 5. Opschonen van de tekstkolommen
     df["sku"] = df["sku"].astype(str).str.strip()
     df["shipto"] = df["shipto"].astype(str).str.strip() 
 
-    # 3. Zorg dat LM numeriek is
+    # 6. Zorg dat LM numeriek is
     df["lm"] = pd.to_numeric(df["lm"], errors='coerce').fillna(0.0)
 
     logging.info("Verwerking voltooid.")
@@ -87,7 +94,8 @@ def main():
 
     # Excelbestand inlezen
     logging.info("Excelbestand wordt geladen…")
-    df = pd.read_excel(excel_path)
+    # We blijven bij de default header=0, aangezien je zei dat de tweede rij geen header heeft.
+    df = pd.read_excel(excel_path) 
 
     # Verwerken
     df_processed = process_shipments(df)
