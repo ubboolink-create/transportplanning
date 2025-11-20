@@ -1,1 +1,35 @@
+name: Process Shipment File
+on:
+  push:
+    paths:
+      - 'data/*.xlsx'
 
+jobs:
+  run-processing:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install pandas openpyxl
+    - name: Run processing script
+      run: |
+        python scripts/process_shipments.py
+    - name: Commit output CSV
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add output/
+        git commit -m "Automated CSV output for new upload" || echo "No changes to commit"
+    - name: Push results
+      uses: ad-m/github-push-action@v1
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
